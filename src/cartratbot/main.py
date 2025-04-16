@@ -1,0 +1,1 @@
+print("Hello stranger, this is a project for calculating the cost of a car.")
