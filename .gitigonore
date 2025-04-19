@@ -1,2 +1,3 @@
 *cache*
-.venv/
+.venv/poetry
+src/cartratbot/config.py

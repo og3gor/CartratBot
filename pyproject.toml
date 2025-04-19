@@ -8,6 +8,9 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "pytelegrambotapi (>=4.26.0,<5.0.0)",
+    "django (>=5.2,<6.0)",
+    "psycopg2-binary (>=2.9.10,<3.0.0)"
 ]
 
 [tool.poetry]
