@@ -36,12 +36,12 @@ def get_models_by_brand(brand_name):
     conn.close()
     return [row[0] for row in rows]
 
-# Поиск машины по марке и модели
+# Поиск машины по марке и модели (выводит в начале уникальный id) нужно для поиска при добавлении по марке и модели
 def get_model_details(brand_name, model_name):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("""
-        SELECT b.name, m.name, m.year_from, m.year_to, m.class, c.description
+        SELECT m.id, b.name, m.name, m.year_from, m.year_to, m.class, c.description
         FROM models m
         JOIN brands b ON m.brand_id = b.id
         LEFT JOIN car_classes c ON m.class = c.code
@@ -52,16 +52,56 @@ def get_model_details(brand_name, model_name):
     conn.close()
     return result
 
-# Поиск модели по user_id
-def get_user_car(user_id):
+def get_car(car_id):
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        # Запрос для получения данных о машине, используя таблицы models и brands
+        cur.execute("""
+            SELECT b.name AS brand_name, m.name AS model_name, m.year_from, m.year_to, m.class
+            FROM models m
+            JOIN brands b ON m.brand_id = b.id
+            WHERE m.id = %s;
+        """, (car_id,))
+        result = cur.fetchone()
+        if result:
+            brand_name, model_name, year_from, year_to, car_class = result
+            return brand_name, model_name, year_from, year_to, car_class
+        else:
+            return None
+    except Exception as e:
+        print(f"[ERROR] Ошибка при получении данных о машине: {e}")
+        return None
+    finally:
+        cur.close()
+        conn.close()
+
+
+# Обновление состояния пользователя в базе данных
+def update_user_state(user_id, state):
     conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT selected_car_brand, selected_car_model, selected_car_year_from, 
-               selected_car_year_to, selected_car_class
-        FROM users_cars
-        WHERE user_id = %s;
+        UPDATE users
+        SET state = %s
+        WHERE id = %s;
+    """, (state, user_id))
+    conn.commit()
+
+    cur.close()
+    conn.close()
+
+
+# Поиск человека по user_id
+def get_user(user_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT id, car_id, car_nickname, state
+        FROM users
+        WHERE id = %s;
     """, (user_id,))
     result = cur.fetchone()
 
@@ -69,47 +109,90 @@ def get_user_car(user_id):
     conn.close()
     return result
 
-# Функция сохранения авто в базу данных
-# Если пользователь есть но обновляем данные, если нет - добавляем (хотя он уже с вероятностью 99% есть в базе)
-def update_user_car(user_id, brand_name, model_name, year_from, year_to, car_class):
+def get_class_description(car_class):
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("SELECT user_id FROM users_cars WHERE user_id = %s", (user_id,))
+    cur.execute("""
+        SELECT description
+        FROM car_classes
+        WHERE code = %s;
+    """, (car_class,))
     result = cur.fetchone()
 
-    if result:
-        cur.execute("""
-            UPDATE users_cars
-            SET selected_car_brand = %s, selected_car_model = %s,
-                selected_car_year_from = %s, selected_car_year_to = %s,
-                selected_car_class = %s
-            WHERE user_id = %s
-        """, (brand_name, model_name, year_from, year_to, car_class, user_id))
-    else:
-        cur.execute("""
-            INSERT INTO users_cars (user_id, selected_car_brand, selected_car_model,
-                                    selected_car_year_from, selected_car_year_to,
-                                    selected_car_class)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (user_id, brand_name, model_name, year_from, year_to, car_class))
-
-    conn.commit()
     cur.close()
     conn.close()
+    return result
+
+def add_user(user_id, state): # Состояние state отправлять строку а не типа State
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO users (id, car_id, car_nickname, state)
+        VALUES (%s, NULL, NULL, %s)
+    """, (user_id, state))
+    conn.commit()
+
+    cur.close()
+    conn.close()
+
 
     # Функция удаления авто
 def delete_user_car(user_id):
     conn = get_connection()
-    with conn.cursor() as cur:
+    cur = conn.cursor()
+    try:
+        # Обновляем запись пользователя, сбрасывая данные о машине в начальные значения
         cur.execute("""
-        UPDATE users_cars
-        SET selected_car_brand = 0,
-            selected_car_model = 0,
-            selected_car_year_from = 0,
-            selected_car_year_to = 0,
-            selected_car_class = 0
-        WHERE user_id = %s
+            UPDATE users
+            SET car_id = NULL,
+                car_nickname = NULL
+            WHERE id = %s
         """, (user_id,))
-    conn.commit()
-    conn.close()
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[ERROR] Ошибка при удалении автомобиля пользователя: {e}")
+        conn.rollback()
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+
+def update_user_car(user_id, car_id):
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    try:
+        # Проверяем, существует ли car_id в таблице models
+        cur.execute("""
+            SELECT id FROM models
+            WHERE id = %s
+        """, (car_id,))
+        
+        car_result = cur.fetchone()
+        
+        if not car_result:
+            print("[ERROR] Машина с таким car_id не существует.")
+            return False  # Возвращаем False, если машина не найдена
+        
+        # Обновляем запись о пользователе, присваиваем car_id
+        cur.execute("""
+            UPDATE users
+            SET car_id = %s, state = 'Default'
+            WHERE id = %s
+        """, (car_id, user_id))
+        
+        conn.commit()
+        return True
+        
+    except Exception as e:
+        print(f"[ERROR] Ошибка при обновлении машины пользователя: {e}")
+        conn.rollback()
+        return False
+        
+    finally:
+        cur.close()
+        conn.close()

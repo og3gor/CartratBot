@@ -2,7 +2,8 @@ print("Start CartratBot")
 
 from config import BOT_TOKEN
 
-from db import get_all_brands, get_models_by_brand, get_model_details, get_connection, update_user_car, get_user_car, delete_user_car
+from db import get_all_brands, get_models_by_brand, get_model_details, get_connection, get_user, add_user, update_user_state
+from db import update_user_car, delete_user_car, get_car, get_class_description
 
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -14,22 +15,18 @@ from telebot.storage import StateMemoryStorage              # Память со�
 
 state_storage = StateMemoryStorage()
 bot = telebot.TeleBot(BOT_TOKEN, state_storage=state_storage)
-
+# Состояния - для запуска после перезагурзаки бота (чтобы пользователь был на том же пункте)
+State.DEFAULT_STATE = 'Default'
 # Определяем состояние для FSM
 class CarStates(StatesGroup):
-    #WaitingStart = State()
+    WaitingStart = State() # Состояние "start"
     WaitingForMycar = State() # Состояние "🏎️ Моя машина"
     WaitingForBrandSearch = State() # Состояние "🔍 Поиск марки"
     WaitingChangingTheCar = State() # Состояние "⚠️ Сменить авто"
     WaitingDeleteACar = State() # Состояние "❌ Удалить авто"
     WaitingForExpenses = State() # Состояние "⛽ Расходы"
 
-@bot.message_handler(commands=['kotik'])
-def send_help(message):
-    help_text = (
-        "Я (Егор), очень люблю моего Котика ❤️\n"
-    )
-    bot.send_message(message.chat.id, help_text, parse_mode='HTML')
+
 
 
 @bot.message_handler(commands=['help'])
@@ -49,6 +46,7 @@ def send_help(message):
 # Если пользователь выберет "Расходы" то показать ему список расходов по авто и предложить добавить новый расход
 
 @bot.message_handler(commands=['start'])
+@bot.message_handler(state=CarStates.WaitingStart)
 def send_welcome(message):
     # Удаляем состояние, если оно есть
     try:
@@ -58,37 +56,31 @@ def send_welcome(message):
     except Exception as e:
         print(f"[WARNING] Не удалось удалить состояние: {e}")
 
+    bot.set_state(message.from_user.id, CarStates.WaitingStart, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
+
     # Устанавливаем команды бота
     bot.set_my_commands([
         types.BotCommand("/start", "Разбудить бота"),
     ])
 
     user_id = message.from_user.id
-
     # Проверяем, есть ли пользователь в базе данных
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT user_id FROM users_cars WHERE user_id = %s;", (user_id,))
-    result = cur.fetchone()
+    result = get_user(user_id)
+    print(f"[DEBUG] Результат поиска авто: {result}")
 
     if result:
-        text = (
+       text = (
             "И снова привет! Вы уже выбрали автомобиль?\n"
-        )
+       )
     else:
-        text = (
-            "Привет! Это CartratBot – бот для учёта расходов на автомобиль.\n"
-            "Нажмите /car для выбора автомобиля или /help для справки."
-        )
-        cur.execute("""
-            INSERT INTO users_cars (user_id, selected_car_brand, selected_car_model, selected_car_year_from, selected_car_year_to, selected_car_class)
-            VALUES (%s, 0, 0, 0, 0, 0)
-            ON CONFLICT (user_id) DO NOTHING;
-        """, (user_id,))
-    
-    conn.commit()
-    cur.close()
-    conn.close()
+         text = (
+             "Привет! Это CartratBot – бот для учёта расходов на автомобиль.\n"
+             "Нажмите /car для выбора автомобиля или /help для справки."
+         )
+         state = bot.get_state(message.from_user.id, message.chat.id)
+         add_user(user_id, state) # Добавляем пользователя в базу данных, если его там нет
+  
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton(text="🏎️ Моя машина"))
     bot.send_message(message.chat.id, text, parse_mode='HTML', reply_markup=markup)
@@ -104,23 +96,28 @@ def send_welcome(message):
 def car(message):
     # Устанавливаем состояние вкладки "Моя машина"
     bot.set_state(message.from_user.id, CarStates.WaitingForMycar, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
     # Для отладки
     print(f"[DEBUG] Установлено состояние WaitingForMycar для {message.from_user.id}")
     # Смотрим есть ли авто у пользователя в базе данных
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     user_id = message.from_user.id
-    car_details = get_user_car(user_id)
+    user_details = get_user(user_id) # Смотрим id машины присвоен ли?
+    print(f"[DEBUG] Результат поиска авто: {user_details}")
+    car_id = user_details[1] # id авто
     #brand_name = car_details[0]
-    if car_details[0] != "0":
-        brand = car_details[0]
-        model = car_details[1]
-        details = get_model_details(brand, model)
-        brand_name, model_name, year_from, year_to, car_class, class_description = details
+    if car_id != None:
+        car_details = get_car(car_id)
+        if car_details != None:
+         brand_name, model_name, year_from, year_to, car_class = car_details
+        class_description = get_class_description(car_class) # Получаем описание класса автомобиля
+        # Формируем сообщение
         text = (
            f"🚗 Ваш автомобиль: <b>{brand_name} {model_name}</b>\n"
            f"Годы выпуска: {year_from}–{year_to}\n"
-           f"Класс: {car_class} ({class_description})"
+           f"Класс: {car_class} ({class_description[0]})"
         )
+        
         markup.add(types.KeyboardButton(text="⛽ Расходы"))
         markup.add(types.KeyboardButton(text="⚠️ Сменить авто"))
         markup.add(types.KeyboardButton(text="❌ Удалить авто"))
@@ -141,6 +138,7 @@ pending_reset = set()  # chat_id пользователей, подтверди�
 def change_car(message):
     # Устанавливаем состояние вкладки "Моя машина"
     bot.set_state(message.from_user.id, CarStates.WaitingChangingTheCar, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
     # Для отладки
     print(f"[DEBUG] Установлено состояние WaitingChangingTheCar для {message.from_user.id}")
     # Нужна проверка и предупреждение о смене автомобиля 
@@ -158,6 +156,7 @@ def change_car(message):
 def confirm_change_car(message):
     # Возврат к предыдущему состоянию
     bot.set_state(message.from_user.id, CarStates.WaitingForMycar, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
     print(f"[DEBUG] Пользователь {message.from_user.id} вернулся к состоянию WaitingForMycar")
     # Удаляем авто из базы данных
     delete_user_car(message.from_user.id)
@@ -172,6 +171,7 @@ def confirm_change_car(message):
 def cancel_change_car(message):
     # Возврат к предыдущему состоянию
     bot.set_state(message.from_user.id, CarStates.WaitingForMycar, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
     print(f"[DEBUG] Пользователь {message.from_user.id} вернулся к состоянию WaitingForMycar")
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton(text="🏎️ Моя машина"))
@@ -187,7 +187,8 @@ def cancel_change_car(message):
 @bot.message_handler(func=lambda message: message.text == "❌ Удалить авто")
 def delete_a_car(message):
         # Устанавливаем состояние вкладки "Моя машина"
-    bot.set_state(message.from_user.id, CarStates.WaitingChangingTheCar, message.chat.id)
+    bot.set_state(message.from_user.id, CarStates.WaitingDeleteACar, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
     # Для отладки
     print(f"[DEBUG] Установлено состояние WaitingChangingTheCar для {message.from_user.id}")
     # Нужна проверка и предупреждение о смене автомобиля 
@@ -205,6 +206,7 @@ def delete_a_car(message):
 def confirm_change_car(message):
     # Возврат к предыдущему состоянию
     bot.set_state(message.from_user.id, CarStates.WaitingForMycar, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
     print(f"[DEBUG] Пользователь {message.from_user.id} вернулся к состоянию WaitingForMycar")
     # Удаляем авто из базы данных
     delete_user_car(message.from_user.id)
@@ -223,12 +225,13 @@ def confirm_change_car(message):
 def status_car_search(message):
     # Устанавливаем состояние вкладки "Поиска марки"
     bot.set_state(message.from_user.id, CarStates.WaitingForBrandSearch, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
     # Для отладки
     print(f"[DEBUG] Установлено состояние WaitingForBrandSearch для {message.from_user.id}")
     # Смотрим есть ли авто у пользователя в базе данных, если есть предлагаем сменить и откатывает в состояние "Моя машина"
-    car_details = get_user_car(message.from_user.id)
-    brand_name = car_details[0]
-    if brand_name != "0" and message.from_user.id not in pending_reset:
+    user_details = get_user(message.from_user.id) # Смотрим id машины есть ли?
+    model_name = user_details[1]
+    if model_name != None and message.from_user.id not in pending_reset:
         bot.send_message(message.chat.id,
                      "У вас уже выбран автомобиль. Чтобы сменить его, нажмите кнопку '⚠️ Сменить авто' в меню.")
         return car(message)
@@ -243,7 +246,9 @@ def process_brand_search(message):
     if message.text == "🔙 Назад":
         # Возврат к предыдущему состоянию
         bot.set_state(message.from_user.id, CarStates.WaitingForMycar, message.chat.id)
+        update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
         print(f"[DEBUG] Пользователь {message.from_user.id} вернулся к состоянию WaitingForMycar")
+        update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
         return car(message)
     
     search_text = message.text.lower()
@@ -270,6 +275,7 @@ def process_brand_selection(message):
     if message.text == "🔙 Назад":
         # Возврат к предыдущему состоянию
         bot.set_state(message.from_user.id, CarStates.WaitingForMycar, message.chat.id)
+        update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
         print(f"[DEBUG] Пользователь {message.from_user.id} вернулся к состоянию WaitingForMycar")
         return car(message)
 
@@ -293,6 +299,7 @@ def process_model_selection(message):
     if message.text == "🔙 Назад":
         # Возврат к предыдущему состоянию
         bot.set_state(message.from_user.id, CarStates.WaitingForMycar, message.chat.id)
+        update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
         print(f"[DEBUG] Пользователь {message.from_user.id} вернулся к состоянию WaitingForMycar")
         return car(message)
 
@@ -302,10 +309,10 @@ def process_model_selection(message):
     
     details = get_model_details(brand, model)
     if details:
-        brand_name, model_name, year_from, year_to, car_class, class_description = details
+        car_id = details[0]
 
         # Сохраняем выбор в базу данных
-        update_user_car(user_id, brand_name, model_name, year_from, year_to, car_class)
+        update_user_car(user_id, car_id)
 
         #удаляем id пользователья из списка подтверждённых на сброс (моего авто)
         if user_id in pending_reset:
