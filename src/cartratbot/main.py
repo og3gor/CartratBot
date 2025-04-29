@@ -4,6 +4,7 @@ from config import BOT_TOKEN
 
 from db import get_all_brands, get_models_by_brand, get_model_details, get_connection, get_user, add_user, update_user_state
 from db import update_user_car, delete_user_car, get_car, get_class_description
+from db import get_all_fuel_types, get_fuel_type_id, get_other_expense_types, get_other_expense_type_id, add_refuel, add_other_expense, get_price_for_fuel, get_fuel_name_by_id, get_other_expense_type_name_by_id, get_full_expense_history
 
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -25,8 +26,14 @@ class CarStates(StatesGroup):
     WaitingChangingTheCar = State() # Состояние "⚠️ Сменить авто"
     WaitingDeleteACar = State() # Состояние "❌ Удалить авто"
     WaitingForExpenses = State() # Состояние "⛽ Расходы"
-
-
+    ChoosingFuelType = State()
+    ChoosingOtherExpenseType = State()
+    EnteringLiters = State()
+    EnteringDate = State()
+    # Прочие расходы
+    EnteringOtherExpenseSum = State()
+    EnteringOtherExpenseDate = State()
+    EnteringOtherExpenseComment = State()
 
 
 @bot.message_handler(commands=['help'])
@@ -162,7 +169,7 @@ def confirm_change_car(message):
     delete_user_car(message.from_user.id)
     markup = types.ReplyKeyboardRemove()
     bot.send_message(message.chat.id, "Данные прошлой машины были удалены 🫡", reply_markup=markup)
-    pending_reset.add(user_id) # Добавляем id пользователья в список подтверждённых на сброс (моего авто)
+    pending_reset.add(message.from_user.id) # Добавляем id пользователья в список подтверждённых на сброс (моего авто)
     # Удаляем состояние
     bot.delete_state(message.from_user.id, message.chat.id)
     return status_car_search(message)
@@ -316,7 +323,7 @@ def process_model_selection(message):
 
         #удаляем id пользователья из списка подтверждённых на сброс (моего авто)
         if user_id in pending_reset:
-            pending_reset.remove(user_id)
+            pending_reset.remove(message.chat.id)
 
         return car(message)
     else:
@@ -324,6 +331,320 @@ def process_model_selection(message):
         markup.add(types.KeyboardButton(text="🏎️ Моя машина"))
         bot.send_message(message.chat.id, "Модель не найдена. Попробуйте ещё раз.", reply_markup=markup)
 
+############################################
+# Работа над расходами авто
+
+@bot.message_handler(func=lambda msg: msg.text == "⛽ Расходы")
+def handle_expense_menu(message):
+    bot.set_state(message.from_user.id, CarStates.WaitingForExpenses, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("➕ Заправка", "➕ Прочий расход", "📈 История", "🔙 Назад")
+    bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup)
+
+@bot.message_handler(func=lambda msg: msg.text == "🔙 Назад")
+def handle_back_to_mycar(message):
+    # Возврат к предыдущему состоянию
+    bot.set_state(message.from_user.id, CarStates.WaitingForMycar, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
+    print(f"[DEBUG] Пользователь {message.from_user.id} вернулся к состоянию WaitingForMycar")
+    return car(message)
+
+############################################
+# Работа над расходами авто (Заправка)
+
+@bot.message_handler(func=lambda msg: msg.text == "➕ Заправка")
+def start_refuel(message):
+    fuels = get_all_fuel_types()
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(*fuels)
+    markup.add("🔙 Назад")
+
+    msg = bot.send_message(message.chat.id, "Выберите тип топлива:", reply_markup=markup)
+    bot.set_state(message.from_user.id, CarStates.ChoosingFuelType, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
+    bot.register_next_step_handler(msg, process_fuel_type_selection)
+
+def process_fuel_type_selection(message):
+    if message.text == "🔙 Назад":
+        bot.delete_state(message.from_user.id, message.chat.id)
+        return handle_expense_menu(message)
+
+    fuel_type_id = get_fuel_type_id(message.text)
+    if not fuel_type_id:
+        bot.send_message(message.chat.id, "❌ Тип топлива не найден. Попробуйте снова.")
+        return start_refuel(message)
+
+    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
+        data['fuel_type_id'] = fuel_type_id
+
+    bot.set_state(message.from_user.id, CarStates.EnteringLiters, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("🔙 Назад")
+    msg = bot.send_message(message.chat.id, "Сколько литров вы заправили?", reply_markup=markup)
+    bot.register_next_step_handler(msg, process_liters_input)
+
+def process_liters_input(message):
+    if message.text == "🔙 Назад":
+        return start_refuel(message)
+
+    try:
+        liters = float(message.text.strip())
+        if liters <= 0:
+            raise ValueError("Литры должны быть положительным числом.")
+
+        with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
+            data['liters'] = liters
+
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add("📅 Сегодня", "✍ Ввести вручную", "🔙 Назад")
+
+        bot.set_state(message.from_user.id, CarStates.EnteringDate, message.chat.id)
+        update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
+        msg = bot.send_message(message.chat.id, "Когда была заправка?", reply_markup=markup)
+        bot.register_next_step_handler(msg, process_date_input)
+
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Введите число литров, например: 42.5")
+
+def process_date_input(message):
+    if message.text == "🔙 Назад":
+        return process_fuel_type_selection(message)
+
+    from datetime import datetime, date
+
+    if message.text == "📅 Сегодня":
+        refuel_date = date.today().isoformat()
+    elif message.text == "✍ Ввести вручную":
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add("🔙 Назад")
+        msg = bot.send_message(message.chat.id, "Введите дату в формате ГГГГ-ММ-ДД:", reply_markup=markup)
+        bot.register_next_step_handler(msg, process_manual_date_input)
+        return
+    else:
+        try:
+            datetime.strptime(message.text.strip(), "%Y-%m-%d")
+            refuel_date = message.text.strip()
+        except Exception:
+            bot.send_message(message.chat.id, "❌ Неверный формат. Введите дату: 2025-04-30")
+            return
+
+    return finalize_refuel(message, refuel_date)
+
+def process_manual_date_input(message):
+    if message.text == "🔙 Назад":
+        return process_liters_input(message)
+
+    from datetime import datetime
+    try:
+        refuel_date = message.text.strip()
+        datetime.strptime(refuel_date, "%Y-%m-%d")
+        return finalize_refuel(message, refuel_date)
+    except Exception:
+        bot.send_message(message.chat.id, "❌ Неверный формат. Введите как 2025-04-30")
+
+def finalize_refuel(message, refuel_date):
+    try:
+        user_id = message.from_user.id
+        with bot.retrieve_data(user_id, message.chat.id) as data:
+            fuel_type_id = data['fuel_type_id']
+            liters = data['liters']
+
+        price_per_liter = get_price_for_fuel(fuel_type_id, refuel_date)
+        if price_per_liter is None:
+            bot.send_message(message.chat.id, "❌ Нет цены на топливо для этой даты.")
+            return handle_expense_menu(message)
+
+        total = round(liters * price_per_liter, 2)
+        fuel_name = get_fuel_name_by_id(fuel_type_id)
+        add_refuel(user_id, fuel_type_id, refuel_date, liters, total)
+        bot.send_message(
+            message.chat.id,
+            f"✅ Заправка сохранена:\n"
+            f"Топливо ID: {fuel_name}\n"
+            f"Объём: {liters} л\n"
+            f"Цена: {price_per_liter}₽/л\n"
+            f"Итого: {total}₽\n"
+            f"Дата: {refuel_date}"
+        )
+        bot.delete_state(user_id, message.chat.id)
+        return handle_expense_menu(message)
+
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Ошибка при сохранении: {e}")
+        bot.delete_state(user_id, message.chat.id)
+        return handle_expense_menu(message)
+
+############################################
+# Работа над расходами авто (Прочий расход)
+
+@bot.message_handler(func=lambda msg: msg.text == "➕ Прочий расход")
+def start_other_expense(message):
+    types_list = get_other_expense_types()
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    for t in types_list:
+        markup.add(t)
+    markup.add("🔙 Назад")
+
+    msg = bot.send_message(message.chat.id, "Выберите тип расхода:", reply_markup=markup)
+    bot.set_state(message.from_user.id, CarStates.ChoosingOtherExpenseType, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
+    bot.register_next_step_handler(msg, process_other_expense_type_selection)
+
+
+def process_other_expense_type_selection(message):
+    if message.text == "🔙 Назад":
+        bot.delete_state(message.from_user.id, message.chat.id)
+        return handle_expense_menu(message)
+
+    type_id = get_other_expense_type_id(message.text)
+    if not type_id:
+        bot.send_message(message.chat.id, "❌ Тип расхода не найден. Попробуйте снова.")
+        return start_other_expense(message)
+
+    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
+        data['other_expense_type_id'] = type_id
+
+    bot.set_state(message.from_user.id, CarStates.EnteringOtherExpenseSum, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("🔙 Назад")
+    msg = bot.send_message(message.chat.id, "Введите сумму расхода:", reply_markup=markup)
+    bot.register_next_step_handler(msg, process_other_expense_sum)
+
+
+def process_other_expense_sum(message):
+    if message.text == "🔙 Назад":
+        return start_other_expense(message)
+
+    try:
+        amount = float(message.text.strip())
+        if amount <= 0:
+            raise ValueError
+
+        with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
+            data['amount'] = amount
+
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add("📅 Сегодня", "✍ Ввести вручную", "🔙 Назад")
+        bot.set_state(message.from_user.id, CarStates.EnteringOtherExpenseDate, message.chat.id)
+        update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
+        msg = bot.send_message(message.chat.id, "Когда был расход?", reply_markup=markup)
+        bot.register_next_step_handler(msg, process_other_expense_date)
+
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Введите положительное число, например: 350")
+
+
+def process_other_expense_date(message):
+    if message.text == "🔙 Назад":
+        return process_other_expense_sum(message)
+
+    from datetime import datetime, date
+    if message.text == "📅 Сегодня":
+        expense_date = date.today().isoformat()
+    elif message.text == "✍ Ввести вручную":
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add("🔙 Назад")
+        msg = bot.send_message(message.chat.id, "Введите дату в формате ГГГГ-ММ-ДД:", reply_markup=markup)
+        bot.register_next_step_handler(msg, process_manual_other_expense_date)
+        return
+    else:
+        try:
+            datetime.strptime(message.text.strip(), "%Y-%m-%d")
+            expense_date = message.text.strip()
+        except:
+            bot.send_message(message.chat.id, "❌ Неверный формат. Введите дату: 2025-04-30")
+            return
+
+    ask_other_expense_comment(message, expense_date)
+
+
+def process_manual_other_expense_date(message):
+    if message.text == "🔙 Назад":
+        return process_other_expense_sum(message)
+
+    from datetime import datetime
+    try:
+        expense_date = message.text.strip()
+        datetime.strptime(expense_date, "%Y-%m-%d")
+        return ask_other_expense_comment(message, expense_date)
+    except:
+        bot.send_message(message.chat.id, "❌ Неверный формат. Введите как 2025-04-30")
+
+
+def ask_other_expense_comment(message, expense_date):
+    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
+        data['expense_date'] = expense_date
+
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("Без комментария", "🔙 Назад")
+    bot.set_state(message.from_user.id, CarStates.EnteringOtherExpenseComment, message.chat.id)
+    update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
+    msg = bot.send_message(message.chat.id, "Введите комментарий к расходу:", reply_markup=markup)
+    bot.register_next_step_handler(msg, finalize_other_expense)
+
+
+def finalize_other_expense(message):
+    if message.text == "🔙 Назад":
+        return process_other_expense_sum(message)
+
+    comment = message.text.strip() if message.text != "Без комментария" else ""
+
+    try:
+        user_id = message.from_user.id
+        with bot.retrieve_data(user_id, message.chat.id) as data:
+            type_id = data['other_expense_type_id']
+            amount = data['amount']
+            expense_date = data['expense_date']
+
+        add_other_expense(user_id, type_id, expense_date, amount, comment)
+        type_name = get_other_expense_type_name_by_id(type_id)  # Функция для получения имени по id
+
+        bot.send_message(
+            message.chat.id,
+            f"✅ Расход сохранён:\n"
+            f"Тип: {type_name}\n"
+            f"Сумма: {amount}₽\n"
+            f"Дата: {expense_date}\n"
+            f"Комментарий: {comment or '—'}"
+        )
+        bot.delete_state(user_id, message.chat.id)
+        return handle_expense_menu(message)
+
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Ошибка при сохранении: {e}")
+        bot.delete_state(user_id, message.chat.id)
+        return handle_expense_menu(message)
+
+############################################
+# Работа над расходами авто (История расходов)
+
+@bot.message_handler(func=lambda msg: msg.text == "📈 История")
+def show_history(message):
+    user_id = message.from_user.id
+    rows = get_full_expense_history(user_id)
+
+    if not rows:
+        bot.send_message(message.chat.id, "Нет расходов.")
+        return
+
+    text = "📊 История расходов:\n\n"
+    for row in rows:
+        expense_type, date, fuel_name, liters, total, other_name, amount, comment = row
+
+        if expense_type == 'refuel':
+            text += f"⛽ {date}: {fuel_name} — {liters} л = {total}₽\n"
+        elif expense_type == 'other':
+            text += f"📌 {date}: {other_name} — {amount}₽"
+            if comment:
+                text += f" ({comment})"
+            text += "\n"
+        else:
+            text += f"❓ {date}: неизвестный расход\n"
+
+    bot.send_message(message.chat.id, text)
+
+
 bot.infinity_polling()
-
-

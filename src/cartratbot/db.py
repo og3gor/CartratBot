@@ -143,13 +143,23 @@ def delete_user_car(user_id):
     conn = get_connection()
     cur = conn.cursor()
     try:
-        # Обновляем запись пользователя, сбрасывая данные о машине в начальные значения
+        # Удаляем сначала из expenses
+        cur.execute("DELETE FROM expenses WHERE user_id = %s", (user_id,))
+
+        # Затем из refuels
+        cur.execute("DELETE FROM refuels WHERE user_id = %s", (user_id,))
+
+        # Затем из other_expenses
+        cur.execute("DELETE FROM other_expenses WHERE user_id = %s", (user_id,))
+
+        # Обновляем запись пользователя, сбрасывая данные о машине
         cur.execute("""
             UPDATE users
             SET car_id = NULL,
                 car_nickname = NULL
             WHERE id = %s
         """, (user_id,))
+
         conn.commit()
         return True
     except Exception as e:
@@ -159,6 +169,7 @@ def delete_user_car(user_id):
     finally:
         cur.close()
         conn.close()
+
 
 
 def update_user_car(user_id, car_id):
@@ -196,3 +207,142 @@ def update_user_car(user_id, car_id):
     finally:
         cur.close()
         conn.close()
+
+# Работа с расходами на авто
+
+# Получить список всех видов топлива
+def get_all_fuel_types():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM fuel_types")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return [r[0] for r in rows]
+
+# Получить ID топлива по названию
+def get_fuel_type_id(name):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM fuel_types WHERE name = %s", (name,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row[0] if row else None
+
+# Получить список типов прочих расходов
+def get_other_expense_types():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM other_expense_types")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return [r[0] for r in rows]
+
+# Получить ID типа прочего расхода
+def get_other_expense_type_id(name):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM other_expense_types WHERE name = %s", (name,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row[0] if row else None
+
+# Добавить заправку
+def add_refuel(user_id, fuel_type_id, date, liters, price_total, comment=None):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO refuels (user_id, fuel_type_id, date, liters, price_total, comment)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id
+    """, (user_id, fuel_type_id, date, liters, price_total, comment))
+    refuel_id = cur.fetchone()[0]
+    cur.execute("""
+        INSERT INTO expenses (user_id, date, type, refuel_id)
+        VALUES (%s, %s, 'refuel', %s)
+    """, (user_id, date, refuel_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+# Добавить другой расход
+def add_other_expense(user_id, type_id, date, amount, comment=None):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO other_expenses (user_id, type_id, date, amount, comment)
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING id
+    """, (user_id, type_id, date, amount, comment))
+    expense_id = cur.fetchone()[0]
+    cur.execute("""
+        INSERT INTO expenses (user_id, date, type, other_expense_id)
+        VALUES (%s, %s, 'other', %s)
+    """, (user_id, date, expense_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def get_price_for_fuel(fuel_type_id, date):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT price_per_liter
+        FROM fuel_prices
+        WHERE fuel_type_id = %s AND date <= %s
+        ORDER BY date DESC
+        LIMIT 1
+    """, (fuel_type_id, date))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return float(row[0]) if row else None
+
+def get_fuel_name_by_id(fuel_type_id):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT name
+        FROM fuel_types
+        WHERE id = %s;
+    """, (fuel_type_id,))
+    result = cur.fetchone()
+
+    cur.close()
+    conn.close()
+    return result[0]
+
+def get_other_expense_type_name_by_id(type_id):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM other_expense_types WHERE id = %s;", (type_id,))
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+    return result[0] if result else "Неизвестно"
+
+def get_full_expense_history(user_id):
+    conn = get_connection()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT e.type,
+                   e.date,
+                   ft.name AS fuel_name,
+                   r.liters,
+                   r.price_total,
+                   oet.name AS other_name,
+                   o.amount,
+                   o.comment
+            FROM expenses e
+            LEFT JOIN refuels r ON e.refuel_id = r.id
+            LEFT JOIN fuel_types ft ON r.fuel_type_id = ft.id
+            LEFT JOIN other_expenses o ON e.other_expense_id = o.id
+            LEFT JOIN other_expense_types oet ON o.type_id = oet.id
+            WHERE e.user_id = %s
+            ORDER BY e.date DESC
+        """, (user_id,))
+        return cur.fetchall()
