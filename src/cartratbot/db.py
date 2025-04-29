@@ -172,10 +172,10 @@ def delete_user_car(user_id):
 
 
 
-def update_user_car(user_id, car_id):
+def update_user_car(user_id, car_id, car_nickname=None):
     conn = get_connection()
     cur = conn.cursor()
-    
+
     try:
         # Проверяем, существует ли car_id в таблице models
         cur.execute("""
@@ -188,22 +188,24 @@ def update_user_car(user_id, car_id):
         if not car_result:
             print("[ERROR] Машина с таким car_id не существует.")
             return False  # Возвращаем False, если машина не найдена
-        
-        # Обновляем запись о пользователе, присваиваем car_id
+
+        # Обновляем запись пользователя, присваиваем car_id и кличку (если указана)
         cur.execute("""
             UPDATE users
-            SET car_id = %s, state = 'Default'
+            SET car_id = %s,
+                car_nickname = %s,
+                state = 'Default'
             WHERE id = %s
-        """, (car_id, user_id))
+        """, (car_id, car_nickname, user_id))
         
         conn.commit()
         return True
-        
+
     except Exception as e:
         print(f"[ERROR] Ошибка при обновлении машины пользователя: {e}")
         conn.rollback()
         return False
-        
+
     finally:
         cur.close()
         conn.close()

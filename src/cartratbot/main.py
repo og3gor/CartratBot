@@ -112,17 +112,22 @@ def car(message):
     user_details = get_user(user_id) # Смотрим id машины присвоен ли?
     print(f"[DEBUG] Результат поиска авто: {user_details}")
     car_id = user_details[1] # id авто
-    #brand_name = car_details[0]
+    car_nickname = user_details[2]
     if car_id != None:
         car_details = get_car(car_id)
         if car_details != None:
          brand_name, model_name, year_from, year_to, car_class = car_details
         class_description = get_class_description(car_class) # Получаем описание класса автомобиля
         # Формируем сообщение
+        if car_nickname:
+            title_line = f"🚗 Ваш автомобиль: <b>{brand_name} {model_name}</b> (\"{car_nickname}\")"
+        else:
+            title_line = f"🚗 Ваш автомобиль: <b>{brand_name} {model_name}</b>"
+
         text = (
-           f"🚗 Ваш автомобиль: <b>{brand_name} {model_name}</b>\n"
-           f"Годы выпуска: {year_from}–{year_to}\n"
-           f"Класс: {car_class} ({class_description[0]})"
+            f"{title_line}\n"
+            f"Годы выпуска: {year_from}–{year_to}\n"
+            f"Класс: {car_class} ({class_description[0]})"
         )
         
         markup.add(types.KeyboardButton(text="⛽ Расходы"))
@@ -276,6 +281,7 @@ def process_brand_search(message):
         bot.send_message(message.chat.id, "Марки не найдены.", reply_markup=markup)
         return car(message)
 # Словарь для временного хранения выбора бренда
+user_car_selection = {}
 user_selected_brand = {}
 def process_brand_selection(message):
 
@@ -317,19 +323,38 @@ def process_model_selection(message):
     details = get_model_details(brand, model)
     if details:
         car_id = details[0]
-
+        user_car_selection[user_id] = (car_id, brand, model)
         # Сохраняем выбор в базу данных
-        update_user_car(user_id, car_id)
+        #update_user_car(user_id, car_id)
 
         #удаляем id пользователья из списка подтверждённых на сброс (моего авто)
         if user_id in pending_reset:
             pending_reset.remove(message.chat.id)
 
-        return car(message)
+        #return car(message)
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add(types.KeyboardButton(text="Пропустить"))
+        msg = bot.send_message(message.chat.id, f"Введите кличку для машины или нажмите 'Пропустить':", reply_markup=markup)
+        bot.register_next_step_handler(msg, choices_car_name)
     else:
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add(types.KeyboardButton(text="🏎️ Моя машина"))
         bot.send_message(message.chat.id, "Модель не найдена. Попробуйте ещё раз.", reply_markup=markup)
+
+def choices_car_name(message):
+    user_id = message.from_user.id
+    car_id = user_car_selection[message.from_user.id][0]
+    if message.text == "Пропустить":
+        # Возврат к предыдущему состоянию
+        update_user_car(user_id, car_id)
+        bot.set_state(message.from_user.id, CarStates.WaitingForMycar, message.chat.id)
+        update_user_state(message.from_user.id, bot.get_state(message.from_user.id, message.chat.id))
+        print(f"[DEBUG] Пользователь {message.from_user.id} вернулся к состоянию WaitingForMycar")
+        return car(message)
+
+    # Сохраняем выбор в базу данных с кличкой
+    update_user_car(user_id, car_id, message.text.strip())
+    return car(message)
 
 ############################################
 # Работа над расходами авто
