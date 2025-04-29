@@ -265,7 +265,7 @@ def process_brand_search(message):
     
     search_text = message.text.lower()
     all_brands = get_all_brands()
-    matching_brands = [brand for brand in all_brands if brand.lower().startswith(search_text)]
+    matching_brands = [brand for brand in all_brands if brand.lower().startswith(search_text)] # Поиск совпадений по первой букве и вывод только нужных кнопок
 
     if matching_brands:
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
