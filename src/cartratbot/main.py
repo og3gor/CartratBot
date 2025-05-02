@@ -26,14 +26,14 @@ class CarStates(StatesGroup):
     WaitingChangingTheCar = State() # Состояние "⚠️ Сменить авто"
     WaitingDeleteACar = State() # Состояние "❌ Удалить авто"
     WaitingForExpenses = State() # Состояние "⛽ Расходы"
-    ChoosingFuelType = State()
-    ChoosingOtherExpenseType = State()
-    EnteringLiters = State()
-    EnteringDate = State()
+    ChoosingFuelType = State() # Состояние "➕ Заправка->Выбор топлива"
+    ChoosingOtherExpenseType = State() # Состояние "➕ Прочий расход->Выбор типа расхода"
+    EnteringLiters = State() # Состояние "➕ Заправка->Ввод литров"
+    EnteringDate = State() # Состояние "➕ Заправка->Ввод даты"
     # Прочие расходы
-    EnteringOtherExpenseSum = State()
-    EnteringOtherExpenseDate = State()
-    EnteringOtherExpenseComment = State()
+    EnteringOtherExpenseSum = State() # Состояние "➕ Прочий расход->Ввод суммы"
+    EnteringOtherExpenseDate = State() # Состояние "➕ Прочий расход->Ввод даты"
+    EnteringOtherExpenseComment = State() # Состояние "➕ Прочий расход->Ввод комментария"
 
 
 @bot.message_handler(commands=['help'])
@@ -646,29 +646,60 @@ def finalize_other_expense(message):
 ############################################
 # Работа над расходами авто (История расходов)
 
+# @bot.message_handler(func=lambda msg: msg.text == "📈 История")
+# def show_history(message):
+#     user_id = message.from_user.id
+#     rows = get_full_expense_history(user_id)
+
+#     if not rows:
+#         bot.send_message(message.chat.id, "Нет расходов.")
+#         return
+
+#     text = "📊 История расходов:\n\n"
+#     for row in rows:
+#         expense_type, date, fuel_name, liters, total, other_name, amount, comment = row
+
+#         if expense_type == 'refuel':
+#             text += f"⛽ {date}: {fuel_name} — {liters} л = {total}₽\n"
+#         elif expense_type == 'other':
+#             text += f"📌 {date}: {other_name} — {amount}₽"
+#             if comment:
+#                 text += f" ({comment})"
+#             text += "\n"
+#         else:
+#             text += f"❓ {date}: неизвестный расход\n"
+
+#     bot.send_message(message.chat.id, text)
+
 @bot.message_handler(func=lambda msg: msg.text == "📈 История")
 def show_history(message):
     user_id = message.from_user.id
     rows = get_full_expense_history(user_id)
 
     if not rows:
-        bot.send_message(message.chat.id, "Нет расходов.")
+        bot.send_message(message.chat.id, "🚫 У вас пока нет записей о расходах.")
         return
 
-    text = "📊 История расходов:\n\n"
+    total_sum = 0.0
+    lines = ["📊 История расходов:\n"]
+
     for row in rows:
         expense_type, date, fuel_name, liters, total, other_name, amount, comment = row
 
         if expense_type == 'refuel':
-            text += f"⛽ {date}: {fuel_name} — {liters} л = {total}₽\n"
+            lines.append(f"⛽ {date}: {fuel_name} — {liters} л, {total}₽")
+            total_sum += float(total)
         elif expense_type == 'other':
-            text += f"📌 {date}: {other_name} — {amount}₽"
+            entry = f"📌 {date}: {other_name} — {amount}₽"
             if comment:
-                text += f" ({comment})"
-            text += "\n"
+                entry += f" ({comment})"
+            lines.append(entry)
+            total_sum += float(amount or 0)
         else:
-            text += f"❓ {date}: неизвестный расход\n"
+            lines.append(f"❓ {date}: неизвестный расход")
 
+    lines.append(f"\n💰 Всего потрачено: {round(total_sum, 2)}₽")
+    text = "\n".join(lines)
     bot.send_message(message.chat.id, text)
 
 

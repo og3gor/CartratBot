@@ -143,16 +143,20 @@ def delete_user_car(user_id):
     conn = get_connection()
     cur = conn.cursor()
     try:
-        # Удаляем сначала из expenses
-        cur.execute("DELETE FROM expenses WHERE user_id = %s", (user_id,))
+        # Удаление расходов при удалении авто теперь реализует тригер в БД
+        # # Получаем все id расходов пользователя
+        # cur.execute("SELECT id FROM expenses WHERE user_id = %s", (user_id,))
+        # expense_ids = [row[0] for row in cur.fetchall()]
 
-        # Затем из refuels
-        cur.execute("DELETE FROM refuels WHERE user_id = %s", (user_id,))
+        # if expense_ids:
+        #     # Удаляем связанные записи из refuels и other_expenses
+        #     cur.execute("DELETE FROM refuels WHERE expense_id = ANY(%s)", (expense_ids,))
+        #     cur.execute("DELETE FROM other_expenses WHERE expense_id = ANY(%s)", (expense_ids,))
 
-        # Затем из other_expenses
-        cur.execute("DELETE FROM other_expenses WHERE user_id = %s", (user_id,))
+        #     # Удаляем из expenses
+        #     cur.execute("DELETE FROM expenses WHERE id = ANY(%s)", (expense_ids,))
 
-        # Обновляем запись пользователя, сбрасывая данные о машине
+        # Обнуляем информацию о машине у пользователя
         cur.execute("""
             UPDATE users
             SET car_id = NULL,
@@ -169,7 +173,6 @@ def delete_user_car(user_id):
     finally:
         cur.close()
         conn.close()
-
 
 
 def update_user_car(user_id, car_id, car_nickname=None):
@@ -256,37 +259,57 @@ def get_other_expense_type_id(name):
 def add_refuel(user_id, fuel_type_id, date, liters, price_total, comment=None):
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO refuels (user_id, fuel_type_id, date, liters, price_total, comment)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        RETURNING id
-    """, (user_id, fuel_type_id, date, liters, price_total, comment))
-    refuel_id = cur.fetchone()[0]
-    cur.execute("""
-        INSERT INTO expenses (user_id, date, type, refuel_id)
-        VALUES (%s, %s, 'refuel', %s)
-    """, (user_id, date, refuel_id))
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        # Получаем type_id для 'refuel'
+        cur.execute("SELECT id FROM expense_types WHERE name = 'refuel'")
+        type_id = cur.fetchone()[0]
+
+        # Добавляем запись в expenses
+        cur.execute("""
+            INSERT INTO expenses (user_id, expense_date, type_id)
+            VALUES (%s, %s, %s)
+            RETURNING id
+        """, (user_id, date, type_id))
+        expense_id = cur.fetchone()[0]
+
+        # Добавляем запись в refuels
+        cur.execute("""
+            INSERT INTO refuels (expense_id, fuel_type_id, liters, price_total, comment)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (expense_id, fuel_type_id, liters, price_total, comment))
+
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
 
 # Добавить другой расход
-def add_other_expense(user_id, type_id, date, amount, comment=None):
+def add_other_expense(user_id, other_type_id, date, amount, comment=None):
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO other_expenses (user_id, type_id, date, amount, comment)
-        VALUES (%s, %s, %s, %s, %s)
-        RETURNING id
-    """, (user_id, type_id, date, amount, comment))
-    expense_id = cur.fetchone()[0]
-    cur.execute("""
-        INSERT INTO expenses (user_id, date, type, other_expense_id)
-        VALUES (%s, %s, 'other', %s)
-    """, (user_id, date, expense_id))
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        # Получаем type_id для 'other'
+        cur.execute("SELECT id FROM expense_types WHERE name = 'other'")
+        type_id = cur.fetchone()[0]
+
+        # Добавляем в expenses
+        cur.execute("""
+            INSERT INTO expenses (user_id, expense_date, type_id)
+            VALUES (%s, %s, %s)
+            RETURNING id
+        """, (user_id, date, type_id))
+        expense_id = cur.fetchone()[0]
+
+        # Добавляем в other_expenses
+        cur.execute("""
+            INSERT INTO other_expenses (expense_id, type_id, amount, comment)
+            VALUES (%s, %s, %s, %s)
+        """, (expense_id, other_type_id, amount, comment))
+
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
 
 def get_price_for_fuel(fuel_type_id, date):
     conn = get_connection()
@@ -294,8 +317,8 @@ def get_price_for_fuel(fuel_type_id, date):
     cur.execute("""
         SELECT price_per_liter
         FROM fuel_prices
-        WHERE fuel_type_id = %s AND date <= %s
-        ORDER BY date DESC
+        WHERE fuel_type_id = %s AND price_date <= %s  -- выбираем цену на дату или раньше
+        ORDER BY price_date DESC
         LIMIT 1
     """, (fuel_type_id, date))
     row = cur.fetchone()
@@ -327,24 +350,27 @@ def get_other_expense_type_name_by_id(type_id):
     conn.close()
     return result[0] if result else "Неизвестно"
 
+
 def get_full_expense_history(user_id):
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT e.type,
-                   e.date,
-                   ft.name AS fuel_name,
-                   r.liters,
-                   r.price_total,
-                   oet.name AS other_name,
-                   o.amount,
-                   o.comment
+            SELECT 
+                et.name AS expense_type,
+                e.expense_date,
+                ft.name AS fuel_name,
+                r.liters,
+                r.price_total,
+                oet.name AS other_name,
+                o.amount,
+                COALESCE(r.comment, o.comment) AS comment
             FROM expenses e
-            LEFT JOIN refuels r ON e.refuel_id = r.id
+            JOIN expense_types et ON e.type_id = et.id
+            LEFT JOIN refuels r ON r.expense_id = e.id
             LEFT JOIN fuel_types ft ON r.fuel_type_id = ft.id
-            LEFT JOIN other_expenses o ON e.other_expense_id = o.id
+            LEFT JOIN other_expenses o ON o.expense_id = e.id
             LEFT JOIN other_expense_types oet ON o.type_id = oet.id
             WHERE e.user_id = %s
-            ORDER BY e.date DESC
+            ORDER BY e.expense_date DESC
         """, (user_id,))
         return cur.fetchall()
