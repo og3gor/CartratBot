@@ -646,31 +646,6 @@ def finalize_other_expense(message):
 ############################################
 # Работа над расходами авто (История расходов)
 
-# @bot.message_handler(func=lambda msg: msg.text == "📈 История")
-# def show_history(message):
-#     user_id = message.from_user.id
-#     rows = get_full_expense_history(user_id)
-
-#     if not rows:
-#         bot.send_message(message.chat.id, "Нет расходов.")
-#         return
-
-#     text = "📊 История расходов:\n\n"
-#     for row in rows:
-#         expense_type, date, fuel_name, liters, total, other_name, amount, comment = row
-
-#         if expense_type == 'refuel':
-#             text += f"⛽ {date}: {fuel_name} — {liters} л = {total}₽\n"
-#         elif expense_type == 'other':
-#             text += f"📌 {date}: {other_name} — {amount}₽"
-#             if comment:
-#                 text += f" ({comment})"
-#             text += "\n"
-#         else:
-#             text += f"❓ {date}: неизвестный расход\n"
-
-#     bot.send_message(message.chat.id, text)
-
 @bot.message_handler(func=lambda msg: msg.text == "📈 История")
 def show_history(message):
     user_id = message.from_user.id

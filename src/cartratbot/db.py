@@ -143,19 +143,8 @@ def delete_user_car(user_id):
     conn = get_connection()
     cur = conn.cursor()
     try:
-        # Удаление расходов при удалении авто теперь реализует тригер в БД
-        # # Получаем все id расходов пользователя
-        # cur.execute("SELECT id FROM expenses WHERE user_id = %s", (user_id,))
-        # expense_ids = [row[0] for row in cur.fetchall()]
-
-        # if expense_ids:
-        #     # Удаляем связанные записи из refuels и other_expenses
-        #     cur.execute("DELETE FROM refuels WHERE expense_id = ANY(%s)", (expense_ids,))
-        #     cur.execute("DELETE FROM other_expenses WHERE expense_id = ANY(%s)", (expense_ids,))
-
-        #     # Удаляем из expenses
-        #     cur.execute("DELETE FROM expenses WHERE id = ANY(%s)", (expense_ids,))
-
+        # Удаление расходов при удалении авто теперь реализует триггер в БД
+       
         # Обнуляем информацию о машине у пользователя
         cur.execute("""
             UPDATE users
