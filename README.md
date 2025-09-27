@@ -113,24 +113,24 @@ ORDER BY total_spent DESC;
 При запуске CartratBot ответит приветственным сообщением и предложит последующие функции, а также выведет вспомогательные клавиши управления «🏎️Моя машина» 
 ![Help](docs/images/help.png)
 ![Вспомогательные клавиши](docs/images/menu.png)
-(docs/images/my_car.png)
+![alt](docs/images/my_car.png)
 После предложив поиск, если мы нажмём «🔍Поиск марки», бот предложит нам марки и модели:
 ![🔍Поиск марки](docs/images/search.png)
 ![Вспомогательные клавиши](docs/images/menu2.png)
 Если у пользователя есть особое (уникальное) название своей машины бот, его можно вписать или же пропустить (для этого в клавиатуре будет клавиша «Пропустить»)
-(docs/images/skip.png)
+![alt](docs/images/skip.png)
 После выбора авто, оно отобразиться и присвоиться пользователю, а блок клавиш смениться на действия с данным автомобилем:
 ![Мое авто](docs/images/my_car2.png)
 ![Добавление расхода](docs/images/expenses.png)
 При вводе пользователем расхода ему следует выбрать клавишу «⛽Расходы», после выбрать что за расход, в какой день и ввести потраченную сумму, а также при необходимости комментарий: 
-(docs/images/expenses2.png)
-(docs/images/expenses3.png)
+![alt](docs/images/expenses2.png)
+![alt](docs/images/expenses3.png)
 Допустим пользователь выбрал заправку, тогда бот предложит ему выбрать тип топлива, и количество литров, после по актуальным данным стоимости топлива (за литр, за кубометр, за киловатт – зависит от выбранного топлива) подсчитает потраченную пользователем сумму.
-(docs/images/expenses4.png)
-(docs/images/expenses5.png)
-(docs/images/expenses6.png)
-(docs/images/expenses7.png)
-(docs/images/expenses8.png)
+![alt](docs/images/expenses4.png)
+![alt](docs/images/expenses5.png)
+![alt](docs/images/expenses6.png)
+![alt](docs/images/expenses7.png)
+![alt](docs/images/expenses8.png)
 После введения расходов пользователь может посмотреть всю историю трат на свой автомобиль, а также сумму всех потраченных средств.
 ![История трат](docs/images/history.png)
 ```
